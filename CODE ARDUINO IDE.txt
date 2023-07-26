@@ -1,0 +1,138 @@
+#include <ESP8266WiFi.h>
+#include <FirebaseESP8266.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+
+// Konfigurasi Firebase
+#define FIREBASE_HOST "https://tubesiot-99fa6-default-rtdb.asia-southeast1.firebasedatabase.app"
+#define FIREBASE_AUTH "uX782hlltR8PI83hVh55LQouFeLaCWDgkcPZ1LZW"
+
+// Konfigurasi WiFi
+#define WIFI_SSID "Bua"
+#define WIFI_PASSWORD "123456789"
+
+int led = 2;   // pin 2 pada NodeMCU (pin 4)
+int pump = 0;  // pin 0 pada NodeMCU (pin 3)
+
+FirebaseData firebaseData;
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 25200);  // Set time zone to GMT+7 (Jakarta)
+
+bool isSensorActive = true;  // Variabel untuk menunjukkan status sensor aktif atau tidak
+
+void sendSensor()
+{
+  if (!isSensorActive) {
+    return;  // Keluar dari fungsi jika sensor tidak aktif
+  }
+
+  int POT = analogRead(A0);
+  Serial.print(POT);
+
+  String statusTanah;
+  
+  if (POT > 500)
+  {
+    Serial.println("KERING");
+    digitalWrite(pump, LOW);
+    for (int x = 0; x <= 10; x++)
+    {
+      delay(500);
+    }
+    digitalWrite(pump, HIGH);
+    Serial.println("AIR MERESAP");
+    for (int x = 9; x > 0; x--)
+    {
+      delay(500);
+    }
+    
+    statusTanah = "Kering";
+
+    // Mendapatkan tanggal dan waktu dari server NTP
+    timeClient.update();
+    String dateTime = timeClient.getFormattedTime();
+
+    // Mengirim tanggal dan waktu ke Firebase
+    if (Firebase.setString(firebaseData, "/sensor/DateTime", dateTime))
+    {
+      Serial.println("Data DateTime terkirim ke Firebase");
+    }
+    else
+    {
+      Serial.println("Gagal mengirim data ke Firebase");
+      Serial.println(firebaseData.errorReason());
+    }
+  }
+  else if (POT >= 300 && POT <= 500)
+  {
+    Serial.println("NORMAL");
+    digitalWrite(pump, HIGH);
+    
+    statusTanah = "Normal";
+  }
+  else if (POT < 300)
+  {
+    Serial.println("BASAH");
+    digitalWrite(pump, HIGH);
+    
+    statusTanah = "Basah";
+  }
+
+  // Mengirim nilai POT ke Firebase
+  if (Firebase.setInt(firebaseData, "/sensor/POT", POT))
+  {
+    Serial.println("Data POT terkirim ke Firebase");
+  }
+  else
+  {
+    Serial.println("Gagal mengirim data ke Firebase");
+    Serial.println(firebaseData.errorReason());
+  }
+  
+  // Mengirim status tanah ke Firebase
+  if (Firebase.setString(firebaseData, "/sensor/StatusTanah", statusTanah))
+  {
+    Serial.println("Data Status Tanah terkirim ke Firebase");
+  }
+  else
+  {
+    Serial.println("Gagal mengirim data ke Firebase");
+    Serial.println(firebaseData.errorReason());
+  }
+}
+
+void setup()
+{
+  Serial.begin(9600);
+  pinMode(pump, OUTPUT);
+
+  // Menghubungkan ke jaringan WiFi
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED)
+  {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.println("WiFi terhubung");
+  
+  // Menginisialisasi koneksi ke Firebase
+  Firebase.begin(FIREBASE_HOST, FIREBASE_AUTH);
+
+  // Menginisialisasi koneksi NTP
+  timeClient.begin();
+}
+
+void loop()
+{
+  if (Firebase.getInt(firebaseData, "/sensor/LED"))
+  {
+    int ledValue = firebaseData.intData();
+    digitalWrite(pump, ledValue);
+    isSensorActive = (ledValue == 1);  // Mengatur status sensor berdasarkan nilai LED di database
+  }
+ 
+  sendSensor();
+  delay(1000); // Menambahkan delay 1 detik antara setiap pemanggilan sendSensor()
+  timeClient.update(); // Memperbarui waktu dari server NTP
+}
